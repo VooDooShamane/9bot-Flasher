@@ -2,7 +2,7 @@
 @echo off
 mode 78,45
 setlocal enabledelayedexpansion
-set "aver=v1.0.1"
+set "aver=v1.0.2"
 set "home=%~dp0"
 cd /d "%home%\res"
 set "sfk=bin\sfk.exe"
@@ -61,7 +61,7 @@ call :AT32DHEAD
 choice /c 1234b /n /m "Press [1],[2],[3],[4] or [b] for back"
 if "%ERRORLEVEL%" == "1" set "action=Downgrade           " & goto :DOWNGRADE
 if "%ERRORLEVEL%" == "2" set "action=Write Flash         " & @echo not implemented yet & pause & goto :AT32DSELACT
-if "%ERRORLEVEL%" == "3" set "action=Backup DRV Config   " & @echo not implemented yet & pause & goto :AT32DSELACT
+if "%ERRORLEVEL%" == "3" set "action=Backup DRV Config   " & goto :BACDRVCONF
 if "%ERRORLEVEL%" == "4" set "action=Dump AT32 Bootloader" & goto :DUMPBTLDR
 if "%ERRORLEVEL%" == "5" goto :AT32DSELESC
 if "%ERRORLEVEL%" == "255" @echo ERROR & pause & goto :AT32DSELACT
@@ -70,72 +70,60 @@ REM -----------------------------------
 REM        END OF UI PART
 REM -----------------------------------
 
+REM ------------------------Write Flash------------------------
+
+:WRITEFLASH
+REM will be implemented in next version
+
+REM ------------------------END Write Flash------------------------
+
+REM ------------------------Backup DRV Config------------------------
+
+:BACDRVCONF
+call :AT32DHEAD
+@echo In the next step the DRV config will be dumped from the ESC's MCU RAM.
+@echo.
+@echo If not done already, connect ST-Link adapter to PC now.
+@echo Press any key, to start the initial countdown.
+@echo.
+pause
+@echo.
+@echo Connect ST-Link wires to ESC.
+@echo You have 30 seconds to do so...
+@echo ^[press "s" to skip countdown^]
+@echo.
+set "ATsleep=30"
+call :AT32DSLEEP
+
+call :AT32DHEAD
+@echo Dumping ESC^'s Config...
+set "OCDiofle=RAM.bin"
+set "OCDsofst=0x20000000"
+set "OCDleng=0x7D00"
+call :OOCDDUMP
+call :FILTDRVCONF
+
+if %ESC_MOTOR_GEN% EQU 0300 (
+%sfk% tell [red]Warning^^!
+@echo Gen. 4 Motor detected
+@echo These new engines do only work with DRV187 firmwares and newer.
+@echo.
+)
+
+@echo.
+%sfk% tell [green] *DRV config Backup created*
+@echo.
+pause
+goto :AT32DSELESC
+pause
+
+REM ------------------------END Backup DRV Config-----------------------
+
 REM ------------------------Downgrade------------------------
 
 :DOWNGRADE
 call :AT32DHEAD
-if not exist "%home%res\firmwares\AT32_BOOTLOADER.bin" (
-	%sfk% tell [red]Error^^![def] No AT32 Bootloader found
-	@echo.
-	@echo Dump Bootloader first from an vulnerable ESC.
-	@echo Use the inbuild dump function,
-	@echo or put it manualy this directory:
-	@echo.
-	@echo "%home%res\firmwares\AT32_BOOTLOADER.bin"
-	@echo.
-	pause
-	goto :AT32DSELACT
-	) else (
-		@echo Found AT32 Bootloader
-		@echo verifying md5sum
-		for /f %%m in ('%sfk% md5 "%home%res\firmwares\AT32_BOOTLOADER.bin"') do if not ["%%m"] == ["d5324fa75fc3303578740ee85526811a"] (
-					@echo.
-					%sfk% tell [red]%%m
-					@echo AT32_BOOTLOADER.bin does not match expected md5sum
-					@echo.
-					pause
-					goto :AT32DSELACT
-		) else (
-			@echo.
-			%sfk% tell [green]%%m
-			@echo AT32_BOOTLOADER.bin md5sum verified
-			@echo.
-			)
-)
-
-if not exist "%home%res\firmwares\DRV173.bin" (
-	%sfk% tell [red]Error^^![def] No vanilla DRV173.bin found.
-	@echo.
-	@echo Download it first from here:
-	@echo.
-	@echo "https://files.scooterhacking.org/firmware/max/DRV/DRV173.bin"
-	@echo.
-	@echo and put it in this directory:
-	@echo.
-	@echo "%home%res\firmwares\DRV173.bin"
-	@echo.
-	pause
-	goto :AT32DSELACT
-	) else (
-		@echo Found DRV173
-		@echo verifying md5sum
-		for /f %%m in ('%sfk% md5 "%home%res\firmwares\DRV173.bin"') do if not ["%%m"] == ["7000da123a7310d90cde2a10bf2029e4"] (
-					@echo.
-					%sfk% tell [red]%%m
-					@echo Vanilla DRV173 does not match expected md5sum
-					@echo.
-					pause
-					goto :AT32DSELACT
-		) else (
-			@echo.
-			%sfk% tell [green]%%m
-			@echo Vanilla DRV173.bin md5sum verified
-			@echo.
-			)
-)
-
-set "ATsleep=3"
-call :AT32DSLEEP
+call :VERIFYFIRM
 call :AT32DHEAD
 @echo In the next step the automatic downgrade process will beginn.
 @echo If not done already, connect ST-Link adapter to PC now.
@@ -149,68 +137,14 @@ pause
 @echo.
 set "ATsleep=30"
 call :AT32DSLEEP
-@echo.
+
 call :AT32DHEAD
 @echo Dumping ESC^'s Config...
 set "OCDiofle=RAM.bin"
 set "OCDsofst=0x20000000"
 set "OCDleng=0x7D00"
 call :OOCDDUMP
-
-for /f %%f in ('%sfk% xhexfind "RAM.bin" "/\x5c\x51/" +filt -+0x "-line=4" -replace "_RAM.bin : hit at offset __" -replace "_ len 2__"') do set ramconfof=%%f
-%sfk% partcopy "%home%res\RAM.bin" %ramconfof% 0x200 "%home%res\DRV_CONF.bin" -yes >NUL
-%sfk% tell [green]Done
-
-for /f %%h in ('%sfk% hexdump -nofile -flat -offlen 0x00000020 0x0000000E "%home%res\DRV_CONF.bin"') do set "ESC_SN=%%h" >NUL
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000001B4 0x0000000C "%home%res\DRV_CONF.bin"') do set ESC_UUID=%%h >NUL
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x00000034 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_DRV=%%h >NUL
-call :9BOTCRAPLE2DEC %ESC_DRV%
-set ESC_DRV_DEC=!OUTP_DEC!
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x00000052 0x00000004 "%home%res\DRV_CONF.bin"') do set ESC_tmile=%%h >NUL
-for /f %%g in ('%sfk% num -hex -show hexle %ESC_tmile%') do set /a ESC_tmile_UI=0x%%g / 1000 >NUL
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x00000064 0x00000004 "%home%res\DRV_CONF.bin"') do set ESC_trunt=%%h >NUL
-for /f %%g in ('%sfk% num -hex -show hexle %ESC_trunt%') do set /a ESC_trunt_UI=0x%%g / 60 / 60 >NUL
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000000FE 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_MOTOR_GEN=%%h >NUL
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000000CE 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_BMS=%%h >NUL
-call :9BOTCRAPLE2DEC %ESC_BMS%
-set ESC_BMS_DEC=!OUTP_DEC!
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000000D0 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_BLE=%%h >NUL
-call :9BOTCRAPLE2DEC %ESC_BLE%
-set ESC_BLE_DEC=!OUTP_DEC!
-for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x0000003A 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_STAT=%%h >NUL
-if %ESC_STAT% EQU 0008 (
-	set ESC_STAT_UI=Activated
-	) else (
-		set ESC_STAT_UI=%ESC_STAT%
-)
-
-call :AT32CHEAD
-@echo Dumping ESC^'s Config...
-%sfk% tell [green]Done
-
-if not exist DRV_Configs\ESC-%ESC_UUID:~0,24%\NUL (
-mkdir DRV_Configs\ESC-%ESC_UUID:~0,24%\ >NUL
-)
-copy /b /y "DRV_CONF.bin" "DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_FULL.bin" >NUL
-
-@echo -------------------------------------------------- >DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo. >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo SerialNr       : %ESC_SN% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo UUID           : %ESC_UUID% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo Status         : %ESC_STAT_UI% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo Motor gen.     : %ESC_MOTOR_GEN% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo DRV version    : %ESC_DRV_DEC% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo BLE version    : %ESC_BLE_DEC% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo BMS version    : %ESC_BMS_DEC% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo Total mileage  : %ESC_tmile_UI% km >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo Total run time : %ESC_trunt_UI% hour >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo. >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-@echo -------------------------------------------------- >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
-
-@echo.
-@echo ESC's config safed to: 
-@echo res\DRV_Configs\ESC-%ESC_UUID:~0,24%\
-@echo.
+call :FILTDRVCONF
 
 if %ESC_MOTOR_GEN% EQU 0300 (
 %sfk% tell [red]Warning^^!
@@ -266,7 +200,7 @@ REM ------------------------Dump Bootloader------------------------
 call :AT32DHEAD
 @echo You will need an vulnerable G30 v1.1 ESC
 @echo with AT32 MCU running DRV173 or lower
-@echo and flash my patched DRV173 Bootloader dumper to it.
+@echo and flash my patched DRV173 Bootloader dumper to it via OTA update.
 @echo After that, you can extract the Bootloader from
 @echo the controller running the patched DRV173 using ST-Link.
 @echo If you are lost, take a look at RollerPlausch.com.
@@ -360,7 +294,7 @@ pause
 @echo.
 set "ATsleep=30"
 call :AT32DSLEEP
-@echo.
+
 @echo.
 @echo Dumping Bootloader...
 set "OCDiofle=AT32_BOOTLOADER.bin"
@@ -381,7 +315,7 @@ for /f %%m in ('%sfk% md5 "%home%res\AT32_BOOTLOADER.bin"') do if not ["%%m"] ==
 	) else (
 		@echo.
 		%sfk% tell [green]%%m
-		@echo Bootloader DRV173 md5sum verified
+		@echo Bootloader md5sum verified
 		copy "AT32_BOOTLOADER.bin" "firmwares\AT32_BOOTLOADER.bin" >NUL & del "AT32_BOOTLOADER.bin" >NUL
 		@echo.
 )
@@ -408,7 +342,7 @@ REM --------------
 
 :OOCDERROR
 set /a errors+=1
-%sfk% tell [red]Error![def] can not connect to target
+%sfk% tell [red]Error![def] ^[%errors%^/10^] can not connect to target, retry in 5 seconds
 @echo ERROR %1 no Connection, %errors%^/10 >>AT32-Downgrader.log
 if ["%errors%"] == ["10"] (
 	@echo Errors ^[%errors%^/10^]
@@ -418,7 +352,6 @@ if ["%errors%"] == ["10"] (
 	set /a errors=0
 	goto :AT32DSTART
 	)
-@echo Errors ^[%errors%^/10^] retry in 5 seconds
 choice /d n /t 5 >NUL
 goto :eof
 pause
@@ -475,12 +408,18 @@ REM ---------------------------------------------------
 
 :AT32DSLEEP
 if not "%ATsleep%" == "0" (
-@echo|set /p="."
-choice /c gs /d g /t 1 >NUL
-if errorlevel 2 goto :eof
-set /a ATsleep-=1
-goto :AT32DSLEEP
+	for /f %%m in ('set /a "a=%ATsleep% %% 5"') do if not %%m EQU 0 (
+		@echo|set /p="."
+	) else (
+		@echo|set /p="%ATsleep%"
+	)
+	
+	choice /c gs /d g /t 1 >NUL
+	if errorlevel 2 goto :eof
+	set /a ATsleep-=1
+	goto :AT32DSLEEP
 )
+@echo 0
 goto :eof
 
 REM ---------------------------------------------------
@@ -500,6 +439,132 @@ if 0x%INP_LE_3% GTR 10 (
 )
 goto :eof
 
+REM ---------------------------------------------------
+
+:VERIFYFIRM
+call :AT32DHEAD
+if not exist "%home%res\firmwares\AT32_BOOTLOADER.bin" (
+	%sfk% tell [red]Error^^![def] No AT32 Bootloader found
+	@echo.
+	@echo Dump Bootloader first from an vulnerable ESC.
+	@echo Use the inbuild dump function,
+	@echo or put it manualy this directory:
+	@echo.
+	@echo "%home%res\firmwares\AT32_BOOTLOADER.bin"
+	@echo.
+	pause
+	goto :AT32DSELACT
+	) else (
+		@echo Found AT32 Bootloader
+		@echo verifying md5sum
+		for /f %%m in ('%sfk% md5 "%home%res\firmwares\AT32_BOOTLOADER.bin"') do if not ["%%m"] == ["d5324fa75fc3303578740ee85526811a"] (
+					@echo.
+					%sfk% tell [red]%%m
+					@echo AT32_BOOTLOADER.bin does not match expected md5sum
+					@echo.
+					pause
+					goto :AT32DSELACT
+		) else (
+			@echo.
+			%sfk% tell [green]%%m
+			@echo AT32_BOOTLOADER.bin md5sum verified
+			@echo.
+			)
+)
+
+if not exist "%home%res\firmwares\DRV173.bin" (
+	%sfk% tell [red]Error^^![def] No vanilla DRV173.bin found.
+	@echo.
+	@echo Download it first from here:
+	@echo.
+	@echo "https://files.scooterhacking.org/firmware/max/DRV/DRV173.bin"
+	@echo.
+	@echo and put it in this directory:
+	@echo.
+	@echo "%home%res\firmwares\DRV173.bin"
+	@echo.
+	pause
+	goto :AT32DSELACT
+	) else (
+		@echo Found DRV173
+		@echo verifying md5sum
+		for /f %%m in ('%sfk% md5 "%home%res\firmwares\DRV173.bin"') do if not ["%%m"] == ["7000da123a7310d90cde2a10bf2029e4"] (
+					@echo.
+					%sfk% tell [red]%%m
+					@echo Vanilla DRV173 does not match expected md5sum
+					@echo.
+					pause
+					goto :AT32DSELACT
+		) else (
+			@echo.
+			%sfk% tell [green]%%m
+			@echo Vanilla DRV173.bin md5sum verified
+			@echo.
+			)
+)
+
+choice /c gs /d g /t 3 >NUL
+goto :eof
+
+REM ---------------------------------------------------
+
+:FILTDRVCONF
+for /f %%f in ('%sfk% xhexfind "RAM.bin" "/\x5c\x51/" +filt -+0x "-line=4" -replace "_RAM.bin : hit at offset __" -replace "_ len 2__"') do set ramconfof=%%f
+%sfk% partcopy "%home%res\RAM.bin" %ramconfof% 0x200 "%home%res\DRV_CONF.bin" -yes >NUL
+%sfk% tell [green]Done
+
+for /f %%h in ('%sfk% hexdump -nofile -flat -offlen 0x00000020 0x0000000E "%home%res\DRV_CONF.bin"') do set "ESC_SN=%%h" >NUL
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000001B4 0x0000000C "%home%res\DRV_CONF.bin"') do set ESC_UUID=%%h >NUL
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x00000034 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_DRV=%%h >NUL
+call :9BOTCRAPLE2DEC %ESC_DRV%
+set ESC_DRV_DEC=!OUTP_DEC!
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x00000052 0x00000004 "%home%res\DRV_CONF.bin"') do set ESC_tmile=%%h >NUL
+for /f %%g in ('%sfk% num -hex -show hexle %ESC_tmile%') do set /a ESC_tmile_UI=0x%%g / 1000 >NUL
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x00000064 0x00000004 "%home%res\DRV_CONF.bin"') do set ESC_trunt=%%h >NUL
+for /f %%g in ('%sfk% num -hex -show hexle %ESC_trunt%') do set /a ESC_trunt_UI=0x%%g / 60 / 60 >NUL
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000000FE 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_MOTOR_GEN=%%h >NUL
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000000CE 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_BMS=%%h >NUL
+call :9BOTCRAPLE2DEC %ESC_BMS%
+set ESC_BMS_DEC=!OUTP_DEC!
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x000000D0 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_BLE=%%h >NUL
+call :9BOTCRAPLE2DEC %ESC_BLE%
+set ESC_BLE_DEC=!OUTP_DEC!
+for /f %%h in ('%sfk% hexdump -nofile -pure -offlen 0x0000003A 0x00000002 "%home%res\DRV_CONF.bin"') do set ESC_STAT=%%h >NUL
+if %ESC_STAT% EQU 0008 (
+	set ESC_STAT_UI=Activated
+	) else (
+		set ESC_STAT_UI=%ESC_STAT%
+)
+
+call :AT32CHEAD
+@echo Dumping ESC^'s Config...
+%sfk% tell [green]Done
+
+if not exist DRV_Configs\ESC-%ESC_UUID:~0,24%\NUL (
+mkdir DRV_Configs\ESC-%ESC_UUID:~0,24%\ >NUL
+)
+copy /b /y "DRV_CONF.bin" "DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF.bin" >NUL
+copy /b /y "RAM.bin" "DRV_Configs\ESC-%ESC_UUID:~0,24%\RAM.bin" >NUL
+
+@echo -------------------------------------------------- >DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo. >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo SerialNr       : %ESC_SN% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo UUID           : %ESC_UUID% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo Status         : %ESC_STAT_UI% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo Motor gen.     : %ESC_MOTOR_GEN% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo DRV version    : %ESC_DRV_DEC% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo BLE version    : %ESC_BLE_DEC% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo BMS version    : %ESC_BMS_DEC% >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo Total mileage  : %ESC_tmile_UI% km >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo Total run time : %ESC_trunt_UI% hour >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo. >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+@echo -------------------------------------------------- >>DRV_Configs\ESC-%ESC_UUID:~0,24%\DRV_CONF_INFO.txt
+
+@echo.
+@echo ESC's config safed to: 
+@echo res\DRV_Configs\ESC-%ESC_UUID:~0,24%\
+@echo.
+goto :eof
 
 REM ------------------------9bot---------------------------
 
